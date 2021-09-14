@@ -4,6 +4,7 @@
 #include <ESPAsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncElegantOTA.h>
+#include <NeoPixelBus.h>
 
 /* -------------------------------------------------------------------------- 
 * DEFINES
@@ -15,6 +16,9 @@
 #define DATA    D8
 #define ENABLE  D3
 #define LED_PIN D2
+#define LED_COUNT 2
+
+#define COLORSATURATION 128
 
 #ifdef ENABLE_WIFI
 const char* ssid = "";
@@ -28,6 +32,7 @@ static void vInitIOs(void);
 static void vInitPumpSetpoints(void);
 static void vShiftPumpSetpointsOut(void);
 
+NeoPixelBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> LEDStrip(LED_COUNT, LED_PIN); // Note: Pin is ignored GPIO3 is used!
 AsyncWebServer server(80);
 _Pumps Pumps = {0};
 
@@ -54,6 +59,9 @@ void setup(void)
   AsyncElegantOTA.begin(&server);    // Start ElegantOTA
   #endif
 
+  LEDStrip.Begin();
+  LEDStrip.Show();
+
   vInitIOs();
   vInitPumpSetpoints();
 }
@@ -66,12 +74,18 @@ void loop(void)
   Pumps.Power.Pump7 = 1;
   Pumps.Power.Pump16 = 1;
   vShiftPumpSetpointsOut();
+  LEDStrip.SetPixelColor(0, RgbColor(128, 0, 0));
+  LEDStrip.SetPixelColor(1, RgbColor(128, 128, 0));
+  LEDStrip.Show();
   delay(1000);
 
   Pumps.u16Raw = 0;
   Pumps.Power.Pump8 = 1;
   Pumps.Power.Pump9 = 1;
   vShiftPumpSetpointsOut();
+  LEDStrip.SetPixelColor(0, RgbColor(0, 0, 128));
+  LEDStrip.SetPixelColor(1, RgbColor(0, 0, 128));
+  LEDStrip.Show();
   delay(1000);
 }
 
