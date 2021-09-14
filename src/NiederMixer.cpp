@@ -9,8 +9,6 @@
 /* -------------------------------------------------------------------------- 
 * DEFINES
 ---------------------------------------------------------------------------- */
-//#define ENABLE_WIFI
-
 #define SCK     D6
 #define LATCH   D7
 #define DATA    D8
@@ -18,12 +16,8 @@
 #define LED_PIN D2
 #define LED_COUNT 2
 
-#define COLORSATURATION 128
-
-#ifdef ENABLE_WIFI
-const char* ssid = "";
-const char* password = "";
-#endif
+const char* ssid = "NiederMixer";
+const char* password = "12345678";
 
 /* -------------------------------------------------------------------------- 
 * STATIC FUNCTION PROTOTYPES
@@ -31,6 +25,8 @@ const char* password = "";
 static void vInitIOs(void);
 static void vInitPumpSetpoints(void);
 static void vShiftPumpSetpointsOut(void);
+static boolean fSetPumpTime(uint8_t pump, uint32_t duration);
+static void vProcessPumps(void);
 
 NeoPixelBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> LEDStrip(LED_COUNT, LED_PIN); // Note: Pin is ignored GPIO3 is used!
 AsyncWebServer server(80);
@@ -43,50 +39,39 @@ void setup(void)
 {
   Serial.begin(115200);
 
-  #ifdef ENABLE_WIFI
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-
-  // Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-  }
+  // Set up WIFI AP
+  WiFi.softAP(ssid, password);
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, "text/plain", ":(");
   });
 
   AsyncElegantOTA.begin(&server);    // Start ElegantOTA
-  #endif
 
   LEDStrip.Begin();
   LEDStrip.Show();
 
   vInitIOs();
   vInitPumpSetpoints();
+
+// Start some pumps for test...
+  (void)fSetPumpTime(0, 1000);
+  (void)fSetPumpTime(1, 2000);
+  (void)fSetPumpTime(2, 3000);
+  (void)fSetPumpTime(3, 4000);
+  (void)fSetPumpTime(9, 5000);
+  (void)fSetPumpTime(15, 6000);
 }
 
 void loop(void) 
 {
-  Pumps.u16Raw = 0;
-  Pumps.Power.Pump1 = 1;
-  Pumps.Power.Pump6 = 1;
-  Pumps.Power.Pump7 = 1;
-  Pumps.Power.Pump16 = 1;
-  vShiftPumpSetpointsOut();
-  LEDStrip.SetPixelColor(0, RgbColor(128, 0, 0));
-  LEDStrip.SetPixelColor(1, RgbColor(128, 128, 0));
-  LEDStrip.Show();
-  delay(1000);
-
-  Pumps.u16Raw = 0;
-  Pumps.Power.Pump8 = 1;
-  Pumps.Power.Pump9 = 1;
-  vShiftPumpSetpointsOut();
   LEDStrip.SetPixelColor(0, RgbColor(0, 0, 128));
   LEDStrip.SetPixelColor(1, RgbColor(0, 0, 128));
   LEDStrip.Show();
-  delay(1000);
+  
+  vProcessPumps();
+  vShiftPumpSetpointsOut(); // Update the outputs based on a fixed time base!
+  delay(50); //TODO add a fixed time base
 }
 
 /* -------------------------------------------------------------------------- 
@@ -99,7 +84,7 @@ void loop(void)
 static void vInitIOs(void)
 {
   // WS2812 control output
-  pinMode(LED_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT); // Not needed.. GPIO3 is used via DMA
 
   // Shift register outputs
   pinMode(ENABLE, OUTPUT);
@@ -114,7 +99,7 @@ static void vInitIOs(void)
 */
 static void vInitPumpSetpoints(void)
 {
-  Pumps.u16Raw = 0;
+  Pumps.Outputs.u16Raw = 0;
   vShiftPumpSetpointsOut();
   digitalWrite(ENABLE, LOW);
 }
@@ -126,7 +111,66 @@ static void vInitPumpSetpoints(void)
 static void vShiftPumpSetpointsOut(void)
 {
   digitalWrite(LATCH, LOW);
-  shiftOut(DATA, SCK, MSBFIRST, (uint8_t)((Pumps.u16Raw >> 8)& 0xFF));
-  shiftOut(DATA, SCK, MSBFIRST, (uint8_t)(Pumps.u16Raw & 0xFF));
+  shiftOut(DATA, SCK, MSBFIRST, (uint8_t)((Pumps.Outputs.u16Raw >> 8)& 0xFF));
+  shiftOut(DATA, SCK, MSBFIRST, (uint8_t)(Pumps.Outputs.u16Raw & 0xFF));
   digitalWrite(LATCH, HIGH);
+}
+
+/**
+* @brief Sets the remaining time [ms] for a given pump
+* @return True if used, false if pump was busy
+*/
+static boolean fSetPumpTime(uint8_t pump, uint32_t duration)
+{
+  boolean fReturn = false;
+
+  // Check array limitation
+  if(pump >= NUMBER_OF_PUMPS)
+    return fReturn;
+
+  // Check if pump isn't busy
+  if(Pumps.Pump[pump].State == OFF)
+  {
+    Pumps.Pump[pump].StartingTime = millis();
+    Pumps.Pump[pump].Duration = duration;
+    fReturn = true;
+  }
+  else // Pump is still busy, don't accept new value
+  {
+    fReturn = false;
+  }
+
+  return fReturn;
+}
+
+/**
+* @brief Process the pump outputs based on the given data
+* @return None
+*/
+static void vProcessPumps(void)
+{
+  // Loop through all available pumps
+  for(uint8_t i = 0; i < NUMBER_OF_PUMPS; i++)
+  {
+    // Check if the pump should be on
+    if((millis() - Pumps.Pump[i].StartingTime) < Pumps.Pump[i].Duration)
+    {
+      // Switch the pump on
+      Pumps.Pump[i].State = ON;
+    }
+    else
+    {
+      // Switch the pump off
+      Pumps.Pump[i].State = OFF;
+    }
+  }
+
+  // Reset outputs to defined state
+  Pumps.Outputs.u16Raw = 0;
+
+  // Apply the pump state to the desired outputs
+  for(uint8_t i = 0; i < NUMBER_OF_PUMPS; i++)
+  {
+    Pumps.Outputs.u16Raw |= (uint16_t)Pumps.Pump[i].State << i;
+  }
 }

@@ -3,7 +3,15 @@
 
 #include <Arduino.h>
 
-union _Pumps
+#define NUMBER_OF_PUMPS 16
+
+typedef enum
+{
+  OFF,
+  ON
+} PUMP_STATE;
+
+union PumpOutput
 {
   uint16_t u16Raw;
   struct _Power
@@ -25,6 +33,19 @@ union _Pumps
     uint8_t Pump15  :1;
     uint8_t Pump16  :1;
   } Power; 
+};
+
+struct _Pump
+{
+  uint32_t  StartingTime;
+  uint32_t  Duration;
+  PUMP_STATE State;
+};
+
+struct _Pumps
+{
+  PumpOutput Outputs;
+  _Pump Pump[NUMBER_OF_PUMPS];
 };
 
 #endif
