@@ -5,6 +5,8 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncElegantOTA.h>
 #include <NeoPixelBus.h>
+#include <ESP8266mDNS.h>
+#include <WebSocketsServer.h>
 
 /* -------------------------------------------------------------------------- 
 * DEFINES
@@ -18,6 +20,10 @@
 
 const char* ssid = "NiederMixer";
 const char* password = "12345678";
+const char* hostname = "niedermixer";
+
+IPAddress accessPointIp(192,168,1,1);
+IPAddress subnet(255,255,255,0);
 
 /* -------------------------------------------------------------------------- 
 * STATIC FUNCTION PROTOTYPES
@@ -27,9 +33,11 @@ static void vInitPumpSetpoints(void);
 static void vShiftPumpSetpointsOut(void);
 static boolean fSetPumpTime(uint8_t pump, uint32_t duration);
 static void vProcessPumps(void);
+static void vWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
 
 NeoPixelBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> LEDStrip(LED_COUNT, LED_PIN); // Note: Pin is ignored GPIO3 is used!
 AsyncWebServer server(80);
+WebSocketsServer webSocketServer = WebSocketsServer(81);
 _Pumps Pumps = {0};
 
 /* -------------------------------------------------------------------------- 
@@ -40,8 +48,12 @@ void setup(void)
   Serial.begin(115200);
 
   // Set up WIFI AP
+  WiFi.softAPConfig(accessPointIp, accessPointIp, subnet);
+  WiFi.hostname(hostname);
   WiFi.softAP(ssid, password);
 
+  MDNS.begin(hostname);
+  
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, "text/plain", ":(");
   });
@@ -50,6 +62,9 @@ void setup(void)
 
   LEDStrip.Begin();
   LEDStrip.Show();
+
+  webSocketServer.begin();
+  webSocketServer.onEvent(vWebSocketEvent);
 
   vInitIOs();
   vInitPumpSetpoints();
@@ -68,6 +83,8 @@ void loop(void)
   LEDStrip.SetPixelColor(0, RgbColor(0, 0, 128));
   LEDStrip.SetPixelColor(1, RgbColor(0, 0, 128));
   LEDStrip.Show();
+
+  webSocketServer.loop();
   
   vProcessPumps();
   vShiftPumpSetpointsOut(); // Update the outputs based on a fixed time base!
@@ -77,6 +94,44 @@ void loop(void)
 /* -------------------------------------------------------------------------- 
 * STATIC FUNCTIONS
 ---------------------------------------------------------------------------- */
+static void vWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) 
+{
+  switch(type) 
+  {
+    case WStype_DISCONNECTED:
+      Serial.printf("[%u] Disconnected!\n", num);
+      break;
+    case WStype_CONNECTED:
+    {
+      IPAddress ip = webSocketServer.remoteIP(num);
+      Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
+
+        // send message to client
+      webSocketServer.sendTXT(num, "Connected");
+      break;
+    }
+    case WStype_TEXT:
+      Serial.printf("[%u] get Text: %s\n", num, payload);
+
+      // send message to client
+      // webSocket.sendTXT(num, "message here");
+
+      // send data to all connected clients
+      // webSocket.broadcastTXT("message here");
+      break;
+    case WStype_BIN:
+      Serial.printf("[%u] get binary length: %u\n", num, length);
+      hexdump(payload, length);
+
+      // send message to client
+      // webSocket.sendBIN(num, payload, length);
+      break;
+
+    default:
+      break;
+  }
+}
+
 /**
 * @brief Initializes the used IOs
 * @return None
