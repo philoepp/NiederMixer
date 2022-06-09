@@ -17,6 +17,8 @@
 #define ENABLE  D3
 #define LED_PIN D2
 #define LED_COUNT 2
+#define PUMP_SHIFT_OUT_DATA_CYCLE_TIME  50 // [ms] 50ms
+#define LED_UPDATE_CYCLE_TIME           50 // [ms] 100ms should be enough
 
 const char* ssid = "NiederMixer";
 const char* password = "12345678";
@@ -31,6 +33,7 @@ IPAddress subnet(255,255,255,0);
 static void vInitIOs(void);
 static void vInitPumpSetpoints(void);
 static void vShiftPumpSetpointsOut(void);
+static void vUpdateLeds(void);
 static boolean fSetPumpTime(uint8_t pump, uint32_t duration);
 static void vProcessPumps(void);
 static void vWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
@@ -53,6 +56,8 @@ void setup(void)
   WiFi.softAP(ssid, password);
 
   MDNS.begin(hostname);
+  MDNS.addService("http", "tcp", 80);
+  MDNS.addService("http", "tcp", 81);
   
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, "text/plain", ":(");
@@ -76,19 +81,19 @@ void setup(void)
   (void)fSetPumpTime(3, 4000);
   (void)fSetPumpTime(9, 5000);
   (void)fSetPumpTime(15, 6000);
+
+// Do a Test of the led strip output
+  LEDStrip.SetPixelColor(0, RgbColor(0, 0, 128));
+  LEDStrip.SetPixelColor(1, RgbColor(0, 0, 128));
 }
 
 void loop(void) 
 {
-  LEDStrip.SetPixelColor(0, RgbColor(0, 0, 128));
-  LEDStrip.SetPixelColor(1, RgbColor(0, 0, 128));
-  LEDStrip.Show();
-
+  // Provide processing time to the different functions
   webSocketServer.loop();
-  
   vProcessPumps();
-  vShiftPumpSetpointsOut(); // Update the outputs based on a fixed time base!
-  delay(50); //TODO add a fixed time base
+  vShiftPumpSetpointsOut();
+  vUpdateLeds();
 }
 
 /* -------------------------------------------------------------------------- 
@@ -165,10 +170,39 @@ static void vInitPumpSetpoints(void)
 */
 static void vShiftPumpSetpointsOut(void)
 {
-  digitalWrite(LATCH, LOW);
-  shiftOut(DATA, SCK, MSBFIRST, (uint8_t)((Pumps.Outputs.u16Raw >> 8)& 0xFF));
-  shiftOut(DATA, SCK, MSBFIRST, (uint8_t)(Pumps.Outputs.u16Raw & 0xFF));
-  digitalWrite(LATCH, HIGH);
+  static uint32_t u32LastTime = millis();
+
+  // Check if time has elapsed, then shift out the data again
+  if((millis() - u32LastTime) > PUMP_SHIFT_OUT_DATA_CYCLE_TIME)
+  {
+    // Update time keeper
+    u32LastTime = millis();
+
+    // Shift out actual data and latch in
+    digitalWrite(LATCH, LOW);
+    shiftOut(DATA, SCK, MSBFIRST, (uint8_t)((Pumps.Outputs.u16Raw >> 8)& 0xFF));
+    shiftOut(DATA, SCK, MSBFIRST, (uint8_t)(Pumps.Outputs.u16Raw & 0xFF));
+    digitalWrite(LATCH, HIGH);
+  }
+}
+
+/**
+* @brief Updates the LEDs on a defined time base
+* @return None
+*/
+static void vUpdateLeds(void)
+{
+  static uint32_t u32LastTime = millis();
+
+  // Check if time has elapsed, then update the LEDs again
+  if((millis() - u32LastTime) > LED_UPDATE_CYCLE_TIME)
+  {
+    // Update time keeper
+    u32LastTime = millis();
+
+    // Update LEDs
+    LEDStrip.Show();
+  }
 }
 
 /**
